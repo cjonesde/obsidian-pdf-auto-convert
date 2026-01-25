@@ -18,32 +18,20 @@ import { resolveAttachmentPath, isInAttachmentFolder, getParentFolder } from './
 export default class PdfConverterPlugin extends Plugin {
   settings: PdfConverterSettings = DEFAULT_SETTINGS;
   private markerAvailable = false;
+  private markerCheckComplete = false;
+  private markerCheckPromise: Promise<void> | null = null;
   private resolvedMarkerPath = '';
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    // Check if Marker is installed
-    try {
-      const markerStatus = await isMarkerInstalled(this.settings.markerPath);
-      this.markerAvailable = markerStatus.installed;
-      this.resolvedMarkerPath = markerStatus.path ?? '';
-      if (!this.markerAvailable) {
-        new Notice(
-          'PDF Auto Converter: Marker is not installed. Please install marker-pdf and configure the path in settings.',
-          10000
-        );
-        console.error('PDF Auto Converter: Marker not found. Please install marker-pdf.');
-      }
-    } catch (error) {
-      console.error('PDF Auto Converter: Error checking Marker:', error);
-      this.markerAvailable = false;
-    }
-
-    // Add settings tab
+    // Add settings tab first (instant)
     this.addSettingTab(new PdfConverterSettingTab(this.app, this));
 
     this.registerContextMenu();
+
+    // Start marker check in background (don't block plugin load)
+    this.markerCheckPromise = this.checkMarkerInBackground();
 
     // Wait for layout to be ready before registering file event
     // This prevents processing existing files during vault initialization
@@ -58,6 +46,35 @@ export default class PdfConverterPlugin extends Plugin {
         })
       );
     });
+  }
+
+  private async checkMarkerInBackground(): Promise<void> {
+    try {
+      const markerStatus = await isMarkerInstalled(this.settings.markerPath);
+      this.markerAvailable = markerStatus.installed;
+      this.resolvedMarkerPath = markerStatus.path ?? '';
+      if (!this.markerAvailable) {
+        new Notice(
+          'PDF Auto Converter: Marker is not installed. Please install marker-pdf and configure the path in settings.',
+          10000
+        );
+        console.error('PDF Auto Converter: Marker not found. Please install marker-pdf.');
+      } else {
+        console.log(`PDF Auto Converter: Marker found at ${this.resolvedMarkerPath}`);
+      }
+    } catch (error) {
+      console.error('PDF Auto Converter: Error checking Marker:', error);
+      this.markerAvailable = false;
+    } finally {
+      this.markerCheckComplete = true;
+    }
+  }
+
+  private async waitForMarkerCheck(): Promise<void> {
+    if (this.markerCheckComplete) return;
+    if (this.markerCheckPromise) {
+      await this.markerCheckPromise;
+    }
   }
 
   async loadSettings(): Promise<void> {
@@ -87,15 +104,21 @@ export default class PdfConverterPlugin extends Plugin {
       return;
     }
 
-    // Check if Marker is available
-    if (!this.markerAvailable) {
-      return;
-    }
-
-    // Only process .pdf files
+    // Only process .pdf files (check early to avoid waiting for marker check)
     if (file.extension.toLowerCase() !== 'pdf') {
       return;
     }
+
+    // Wait for marker check to complete if still running
+    await this.waitForMarkerCheck();
+
+    // Check if Marker is available
+    if (!this.markerAvailable) {
+      console.log('PDF Auto Converter: Skipping conversion - Marker not available');
+      return;
+    }
+
+    console.log(`PDF Auto Converter: Processing ${file.path}`);
 
     // Get attachment folder setting
     const attachmentFolderPath = this.getAttachmentFolderPath();

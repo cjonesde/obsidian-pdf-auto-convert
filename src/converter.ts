@@ -81,7 +81,7 @@ export function generateMarkdownOutput(
  * Convert PDF to Markdown using Marker.
  */
 async function convertWithMarker(
-  pdfPath: string,
+  inputDir: string,
   markerPath: string,
   outputDir: string
 ): Promise<string> {
@@ -90,13 +90,13 @@ async function convertWithMarker(
     const { stdout } = await execFileAsync(markerCmd, [
       '--output_dir', outputDir,
       '--output_format', 'markdown',
-      pdfPath,
+      inputDir,
     ]);
     return stdout;
   } catch {
     const { stdout } = await execFileAsync(markerCmd, [
       '--output_dir', outputDir,
-      pdfPath,
+      inputDir,
     ]);
     return stdout;
   }
@@ -185,15 +185,17 @@ export async function convertPdf(
   const warnings: string[] = [];
 
   const tempDir = await mkdtempAsync(path.join(os.tmpdir(), 'pdf-convert-'));
-  const tempFile = path.join(tempDir, 'input.pdf');
+  const inputDir = path.join(tempDir, 'input');
+  const tempFile = path.join(inputDir, 'input.pdf');
   const outputDir = path.join(tempDir, 'marker-output');
 
   try {
+    await fs.promises.mkdir(inputDir, { recursive: true });
     await writeFileAsync(tempFile, Buffer.from(buffer));
     await fs.promises.mkdir(outputDir, { recursive: true });
 
     const metadata = await extractMetadata(tempFile);
-    const markerStdout = await convertWithMarker(tempFile, markerPath, outputDir);
+    const markerStdout = await convertWithMarker(inputDir, markerPath, outputDir);
     let markdown = '';
     let markdownPath = '';
     try {
@@ -298,7 +300,34 @@ function getMarkerCandidates(markerPath: string): string[] {
 }
 
 /**
+ * Check if a file exists (for absolute paths).
+ */
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(filePath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find executable using 'which' command (fast PATH lookup).
+ */
+async function whichCommand(command: string): Promise<string | null> {
+  try {
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+    const { stdout } = await execFileAsync(whichCmd, [command]);
+    const result = stdout.trim().split('\n')[0];
+    return result || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Check if Marker is installed and get version info.
+ * Optimized to avoid slow Python startup when possible.
  */
 export async function isMarkerInstalled(
   markerPath: string = ''
@@ -306,21 +335,18 @@ export async function isMarkerInstalled(
   const candidates = getMarkerCandidates(markerPath);
 
   for (const candidate of candidates) {
-    try {
-      const { stdout } = await execFileAsync(candidate, ['--version']);
-      const versionMatch = stdout.match(/(\d+\.\d+(?:\.\d+)?)/);
-      return {
-        installed: true,
-        version: versionMatch ? versionMatch[1] : 'unknown',
-        path: candidate,
-      };
-    } catch {
-      try {
-        await execFileAsync(candidate, ['--help']);
+    // For absolute paths, check if file exists first (instant)
+    if (path.isAbsolute(candidate)) {
+      if (await fileExists(candidate)) {
         return { installed: true, version: 'unknown', path: candidate };
-      } catch {
-        continue;
       }
+      continue;
+    }
+
+    // For command names, use 'which' to find the path (fast)
+    const resolvedPath = await whichCommand(candidate);
+    if (resolvedPath) {
+      return { installed: true, version: 'unknown', path: resolvedPath };
     }
   }
 
