@@ -62,6 +62,7 @@ sudo apt install poppler-utils
 ## Features
 
 - **Automatic conversion:** Drop a .pdf file into your vault and it is converted to Markdown
+- **Manual conversion:** Right-click any PDF to convert it, or right-click a folder to batch convert all PDFs inside
 - **Image extraction:** Embedded images are extracted and saved to your attachment folder
 - **Metadata preservation:** Title, author, dates, and keywords are added to YAML frontmatter when available
 - **Respects Obsidian settings:** Uses your configured attachment folder location and link format (wiki links or markdown links)
