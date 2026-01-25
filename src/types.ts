@@ -8,8 +8,8 @@ export interface PdfConverterSettings {
   includeFrontmatter: boolean;
   /** Delete original .pdf after conversion instead of keeping */
   deleteOriginal: boolean;
-  /** Custom path to Pandoc executable (empty = use PATH) */
-  pandocPath: string;
+  /** Custom path to Marker executable (empty = use PATH) */
+  markerPath: string;
 }
 
 /**
@@ -19,7 +19,7 @@ export const DEFAULT_SETTINGS: PdfConverterSettings = {
   enabled: true,
   includeFrontmatter: true,
   deleteOriginal: false,
-  pandocPath: '',
+  markerPath: '',
 };
 
 /**

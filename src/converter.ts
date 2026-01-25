@@ -78,27 +78,78 @@ export function generateMarkdownOutput(
 }
 
 /**
- * Convert PDF to markdown using Pandoc.
+ * Convert PDF to Markdown using Marker.
  */
-async function convertWithPandoc(
+async function convertWithMarker(
   pdfPath: string,
-  pandocPath: string,
-  extractMediaDir: string
+  markerPath: string,
+  outputDir: string
 ): Promise<string> {
-  const pandocCmd = pandocPath || 'pandoc';
-  const { stdout } = await execFileAsync(pandocCmd, [
-    '-f', 'pdf',
-    '-t', 'markdown',
-    '--wrap=none',
-    '--markdown-headings=atx',
-    `--extract-media=${extractMediaDir}`,
-    pdfPath,
-  ]);
-  return stdout;
+  const markerCmd = markerPath || 'marker';
+  try {
+    const { stdout } = await execFileAsync(markerCmd, [
+      '--output_dir', outputDir,
+      '--output_format', 'markdown',
+      pdfPath,
+    ]);
+    return stdout;
+  } catch {
+    const { stdout } = await execFileAsync(markerCmd, [
+      '--output_dir', outputDir,
+      pdfPath,
+    ]);
+    return stdout;
+  }
+}
+
+async function listFiles(rootDir: string): Promise<string[]> {
+  const files: string[] = [];
+
+  try {
+    const entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(rootDir, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...await listFiles(fullPath));
+      } else if (entry.isFile()) {
+        files.push(fullPath);
+      }
+    }
+  } catch {
+    return [];
+  }
+
+  return files;
+}
+
+async function readMarkerMarkdown(
+  outputDir: string,
+  documentName: string
+): Promise<{ content: string; filePath: string }> {
+  const files = await listFiles(outputDir);
+  const markdownFiles = files.filter((filePath) => {
+    const extension = path.extname(filePath).toLowerCase();
+    return extension === '.md' || extension === '.markdown';
+  });
+
+  if (markdownFiles.length === 0) {
+    throw new Error('Marker did not produce a Markdown file.');
+  }
+
+  markdownFiles.sort((a, b) => a.localeCompare(b));
+
+  const normalizedName = documentName.trim().toLowerCase();
+  const matching = markdownFiles.find((filePath) =>
+    path.basename(filePath, path.extname(filePath)).toLowerCase() === normalizedName
+  );
+
+  const selectedFile = matching ?? markdownFiles[0];
+  const content = await fs.promises.readFile(selectedFile, 'utf8');
+  return { content, filePath: selectedFile };
 }
 
 /**
- * Post-process Pandoc markdown output to fix image references.
+ * Post-process Markdown output to fix image references.
  */
 export function replaceImageReferences(
   markdown: string,
@@ -124,26 +175,39 @@ export function replaceImageReferences(
 }
 
 /**
- * Convert a PDF file to Markdown using Pandoc.
+ * Convert a PDF file to Markdown using Marker.
  */
 export async function convertPdf(
   buffer: ArrayBuffer,
   documentName: string,
-  pandocPath: string = ''
+  markerPath: string = ''
 ): Promise<ConversionResult> {
   const warnings: string[] = [];
 
   const tempDir = await mkdtempAsync(path.join(os.tmpdir(), 'pdf-convert-'));
   const tempFile = path.join(tempDir, 'input.pdf');
-  const extractMediaDir = path.join(tempDir, 'extract-media');
+  const outputDir = path.join(tempDir, 'marker-output');
 
   try {
     await writeFileAsync(tempFile, Buffer.from(buffer));
-    await fs.promises.mkdir(extractMediaDir, { recursive: true });
+    await fs.promises.mkdir(outputDir, { recursive: true });
 
     const metadata = await extractMetadata(tempFile);
-    let markdown = await convertWithPandoc(tempFile, pandocPath, extractMediaDir);
-    const images = await collectExtractedImages(extractMediaDir, documentName);
+    const markerStdout = await convertWithMarker(tempFile, markerPath, outputDir);
+    let markdown = '';
+    let markdownPath = '';
+    try {
+      const markerOutput = await readMarkerMarkdown(outputDir, documentName);
+      markdown = markerOutput.content;
+      markdownPath = markerOutput.filePath;
+    } catch {
+      markdown = markerStdout;
+    }
+    if (!markdown || markdown.trim().length === 0) {
+      throw new Error('Marker did not produce any Markdown output.');
+    }
+    const referenceRoot = markdownPath ? path.dirname(markdownPath) : outputDir;
+    const images = await collectExtractedImages(outputDir, documentName, referenceRoot);
 
     markdown = markdown.replace(/\n{3,}/g, '\n\n');
 
@@ -156,8 +220,8 @@ export async function convertPdf(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    if (errorMessage.includes('ENOENT') && errorMessage.includes('pandoc')) {
-      throw new Error('Pandoc is not installed. Please install Pandoc to use this plugin.');
+    if (errorMessage.includes('ENOENT') && errorMessage.includes('marker')) {
+      throw new Error('Marker is not installed. Please install marker-pdf to use this plugin.');
     }
 
     throw error;
@@ -176,23 +240,22 @@ export async function convertPdf(
  */
 export async function isPasswordProtected(
   buffer: ArrayBuffer,
-  pandocPath: string = ''
+  pdfInfoPath: string = ''
 ): Promise<boolean> {
   const tempDir = await mkdtempAsync(path.join(os.tmpdir(), 'pdf-check-'));
   const tempFile = path.join(tempDir, 'check.pdf');
-  const pandocCmd = pandocPath || 'pandoc';
+  const pdfInfoCmd = pdfInfoPath || 'pdfinfo';
 
   try {
     await writeFileAsync(tempFile, Buffer.from(buffer));
-    await execFileAsync(pandocCmd, ['-f', 'pdf', '-t', 'plain', tempFile]);
-    return false;
+    const { stdout } = await execFileAsync(pdfInfoCmd, [tempFile]);
+    return /encrypted:\s*yes/i.test(stdout);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const message = errorMessage.toLowerCase();
     return message.includes('encrypt') ||
       message.includes('password') ||
-      message.includes('protected') ||
-      message.includes('could not parse');
+      message.includes('protected');
   } finally {
     try {
       await unlinkAsync(tempFile);
@@ -203,31 +266,31 @@ export async function isPasswordProtected(
   }
 }
 
-function getPandocCandidates(pandocPath: string): string[] {
-  const trimmed = pandocPath.trim();
+function getMarkerCandidates(markerPath: string): string[] {
+  const trimmed = markerPath.trim();
   if (trimmed.length > 0) {
     return [trimmed];
   }
 
-  const candidates = ['pandoc'];
+  const candidates = ['marker', 'marker-pdf'];
 
   if (process.platform === 'darwin') {
     candidates.push(
-      '/opt/homebrew/bin/pandoc',
-      '/usr/local/bin/pandoc',
-      '/opt/local/bin/pandoc',
-      '/usr/bin/pandoc'
+      '/opt/homebrew/bin/marker',
+      '/usr/local/bin/marker',
+      '/opt/local/bin/marker',
+      '/usr/bin/marker'
     );
   } else if (process.platform === 'win32') {
     candidates.push(
-      'C:\\Program Files\\Pandoc\\pandoc.exe',
-      'C:\\Program Files (x86)\\Pandoc\\pandoc.exe'
+      'C:\\Program Files\\marker\\marker.exe',
+      'C:\\Program Files (x86)\\marker\\marker.exe'
     );
   } else {
     candidates.push(
-      '/usr/local/bin/pandoc',
-      '/usr/bin/pandoc',
-      '/snap/bin/pandoc'
+      '/usr/local/bin/marker',
+      '/usr/bin/marker',
+      '/snap/bin/marker'
     );
   }
 
@@ -235,24 +298,29 @@ function getPandocCandidates(pandocPath: string): string[] {
 }
 
 /**
- * Check if Pandoc is installed and get version info.
+ * Check if Marker is installed and get version info.
  */
-export async function isPandocInstalled(
-  pandocPath: string = ''
+export async function isMarkerInstalled(
+  markerPath: string = ''
 ): Promise<{ installed: boolean; version?: string; path?: string }> {
-  const candidates = getPandocCandidates(pandocPath);
+  const candidates = getMarkerCandidates(markerPath);
 
   for (const candidate of candidates) {
     try {
       const { stdout } = await execFileAsync(candidate, ['--version']);
-      const versionMatch = stdout.match(/pandoc[^\d]*(\d+\.\d+(?:\.\d+)?)/i);
+      const versionMatch = stdout.match(/(\d+\.\d+(?:\.\d+)?)/);
       return {
         installed: true,
         version: versionMatch ? versionMatch[1] : 'unknown',
         path: candidate,
       };
     } catch {
-      continue;
+      try {
+        await execFileAsync(candidate, ['--help']);
+        return { installed: true, version: 'unknown', path: candidate };
+      } catch {
+        continue;
+      }
     }
   }
 

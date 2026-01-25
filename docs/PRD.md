@@ -37,7 +37,7 @@ Users drop PDF documents into their vault expecting to work with them natively. 
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | FR-01 | Listen for `.pdf` file creation via Obsidian's `vault.on('create')` event | P0 |
-| FR-02 | Convert .pdf to Markdown using Pandoc | P0 |
+| FR-02 | Convert .pdf to Markdown using marker-pdf | P0 |
 | FR-03 | Place converted .md file in same folder as original .pdf | P0 |
 | FR-04 | Move original .pdf to vault's configured attachment folder | P0 |
 | FR-05 | Insert link to original .pdf in frontmatter or note header | P0 |
@@ -118,7 +118,7 @@ Users drop PDF documents into their vault expecting to work with them natively. 
    Read file as ArrayBuffer
          |
          v
-   Parse with Pandoc
+   Parse with marker-pdf
          |
          |-> Extract images -> write to attachment folder
          |

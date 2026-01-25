@@ -25,27 +25,26 @@ Then copy `main.js` and `manifest.json` to your vault's `.obsidian/plugins/pdf-a
 
 ## Requirements
 
-This plugin requires [Pandoc](https://pandoc.org/) to be installed on your system. For PDF input, Pandoc relies on Poppler utilities (such as `pdftotext`).
+This plugin requires [marker-pdf](https://github.com/VikParuchuri/marker) to be installed on your system. Metadata extraction and password checks use Poppler's `pdfinfo` when available.
 
-### Installing Pandoc
+### Installing marker-pdf
 
-**macOS:**
+**macOS/Linux:**
 ```bash
-brew install pandoc
+pipx install marker-pdf
 ```
 
 **Windows:**
 ```bash
-winget install pandoc
+pipx install marker-pdf
 ```
-Or download from [pandoc.org/installing.html](https://pandoc.org/installing.html)
 
-**Linux (Debian/Ubuntu):**
+Or using pip (inside a virtualenv):
 ```bash
-sudo apt install pandoc
+pip install marker-pdf
 ```
 
-### Installing Poppler (for PDF conversion)
+### Installing Poppler (optional)
 
 **macOS:**
 ```bash
@@ -53,7 +52,7 @@ brew install poppler
 ```
 
 **Windows:**
-Install Poppler from a trusted package source and ensure `pdftotext` is on your PATH.
+Install Poppler from a trusted package source and ensure `pdfinfo` is on your PATH.
 
 **Linux (Debian/Ubuntu):**
 ```bash
@@ -71,17 +70,17 @@ sudo apt install poppler-utils
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Pandoc path | Custom path to Pandoc executable (leave empty to use system PATH) | Empty |
+| Marker path | Custom path to marker executable (leave empty to use system PATH) | Empty |
 | Enable automatic conversion | Toggle automatic conversion on or off | Enabled |
 | Add frontmatter with metadata | Add YAML frontmatter with document metadata | Enabled |
 | Delete original file | Delete the .pdf after conversion instead of moving to attachments | Disabled |
 
-The settings page shows Pandoc status (installed or not found) and updates in real time when you change the path.
+The settings page shows Marker status (installed or not found) and updates in real time when you change the path.
 
 ## How it works
 
 1. When a .pdf file is added to your vault, the plugin detects it
-2. The document is converted to Markdown using Pandoc
+2. The document is converted to Markdown using marker-pdf
 3. Embedded images are extracted and saved to your attachment folder
 4. PDF metadata (when available) is added as YAML frontmatter
 5. The original .pdf is either moved to your attachment folder or deleted (based on settings)
@@ -102,7 +101,7 @@ modified: 2025-01-15
 
 ## Limitations
 
-- Requires Pandoc to be installed and accessible in your system PATH
+- Requires marker-pdf to be installed and accessible in your system PATH
 - Password-protected PDFs cannot be converted
 - Scanned PDFs without embedded text will not convert without OCR
 - Complex layouts may not convert perfectly
@@ -110,12 +109,12 @@ modified: 2025-01-15
 
 ## Troubleshooting
 
-**"Pandoc is not installed" message:**
-1. Install Pandoc using the instructions above
-2. If Pandoc is installed but not detected, set the full path in settings:
-   - **macOS/Linux:** Run `which pandoc` in Terminal and paste the result
-   - **Windows:** Run `Get-Command pandoc` in PowerShell and use the Source path
-3. Restart Obsidian if you installed Pandoc while it was running
+**"Marker is not installed" message:**
+1. Install marker-pdf using the instructions above
+2. If marker-pdf is installed but not detected, set the full path in settings:
+   - **macOS/Linux:** Run `which marker` in Terminal and paste the result
+   - **Windows:** Run `Get-Command marker` in PowerShell and use the Source path
+3. Restart Obsidian if you installed marker-pdf while it was running
 
 **Images not appearing:**
 Check that your attachment folder setting in Obsidian is configured correctly. Images are saved relative to this setting.

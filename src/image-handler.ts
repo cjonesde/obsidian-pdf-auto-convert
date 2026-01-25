@@ -66,11 +66,12 @@ async function listFiles(rootDir: string): Promise<string[]> {
 }
 
 /**
- * Collect extracted images from a Pandoc media directory.
+ * Collect extracted images from a conversion output directory.
  */
 export async function collectExtractedImages(
   extractRoot: string,
-  documentName: string
+  documentName: string,
+  referenceRoot: string = extractRoot
 ): Promise<ExtractedImage[]> {
   const files = await listFiles(extractRoot);
   if (files.length === 0) {
@@ -93,7 +94,7 @@ export async function collectExtractedImages(
       fileBuffer.byteOffset,
       fileBuffer.byteOffset + fileBuffer.byteLength
     );
-    const sourcePath = normalizeRelativePath(path.relative(extractRoot, filePath));
+    const sourcePath = normalizeRelativePath(path.relative(referenceRoot, filePath));
     const filename = generateImageFilename(documentName, index, extension);
     const contentType = getContentTypeFromExtension(extension);
 

@@ -1,7 +1,7 @@
 import { App, ButtonComponent, Modal, Notice, Plugin, TAbstractFile, TFile, TFolder, normalizePath } from 'obsidian';
 import { PdfConverterSettings, DEFAULT_SETTINGS } from './types';
 import { PdfConverterSettingTab } from './settings';
-import { convertPdf, generateMarkdownOutput, isPasswordProtected, isPandocInstalled, replaceImageReferences } from './converter';
+import { convertPdf, generateMarkdownOutput, isPasswordProtected, isMarkerInstalled, replaceImageReferences } from './converter';
 import { resolveAttachmentPath, isInAttachmentFolder, getParentFolder } from './path-resolver';
 
 /**
@@ -17,27 +17,27 @@ import { resolveAttachmentPath, isInAttachmentFolder, getParentFolder } from './
  */
 export default class PdfConverterPlugin extends Plugin {
   settings: PdfConverterSettings = DEFAULT_SETTINGS;
-  private pandocAvailable = false;
-  private resolvedPandocPath = '';
+  private markerAvailable = false;
+  private resolvedMarkerPath = '';
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    // Check if Pandoc is installed
+    // Check if Marker is installed
     try {
-      const pandocStatus = await isPandocInstalled(this.settings.pandocPath);
-      this.pandocAvailable = pandocStatus.installed;
-      this.resolvedPandocPath = pandocStatus.path ?? '';
-      if (!this.pandocAvailable) {
+      const markerStatus = await isMarkerInstalled(this.settings.markerPath);
+      this.markerAvailable = markerStatus.installed;
+      this.resolvedMarkerPath = markerStatus.path ?? '';
+      if (!this.markerAvailable) {
         new Notice(
-          'PDF Auto Converter: Pandoc is not installed. Please install Pandoc and configure the path in settings.',
+          'PDF Auto Converter: Marker is not installed. Please install marker-pdf and configure the path in settings.',
           10000
         );
-        console.error('PDF Auto Converter: Pandoc not found. Please install from https://pandoc.org/installing.html');
+        console.error('PDF Auto Converter: Marker not found. Please install marker-pdf.');
       }
     } catch (error) {
-      console.error('PDF Auto Converter: Error checking Pandoc:', error);
-      this.pandocAvailable = false;
+      console.error('PDF Auto Converter: Error checking Marker:', error);
+      this.markerAvailable = false;
     }
 
     // Add settings tab
@@ -69,12 +69,12 @@ export default class PdfConverterPlugin extends Plugin {
   }
 
   /**
-   * Recheck Pandoc availability (called after settings change).
+   * Recheck Marker availability (called after settings change).
    */
-  async recheckPandoc(): Promise<{ installed: boolean; version?: string; path?: string }> {
-    const status = await isPandocInstalled(this.settings.pandocPath);
-    this.pandocAvailable = status.installed;
-    this.resolvedPandocPath = status.path ?? '';
+  async recheckMarker(): Promise<{ installed: boolean; version?: string; path?: string }> {
+    const status = await isMarkerInstalled(this.settings.markerPath);
+    this.markerAvailable = status.installed;
+    this.resolvedMarkerPath = status.path ?? '';
     return status;
   }
 
@@ -87,8 +87,8 @@ export default class PdfConverterPlugin extends Plugin {
       return;
     }
 
-    // Check if Pandoc is available
-    if (!this.pandocAvailable) {
+    // Check if Marker is available
+    if (!this.markerAvailable) {
       return;
     }
 
@@ -165,7 +165,7 @@ export default class PdfConverterPlugin extends Plugin {
    * Convert a single PDF file via context menu.
    */
   private async convertPdfFileManually(file: TFile): Promise<void> {
-    if (!(await this.ensurePandocAvailable())) {
+    if (!(await this.ensureMarkerAvailable())) {
       return;
     }
 
@@ -182,7 +182,7 @@ export default class PdfConverterPlugin extends Plugin {
    * Convert PDF files in a folder via context menu.
    */
   private async convertFolderPdfFiles(folder: TFolder): Promise<void> {
-    if (!(await this.ensurePandocAvailable())) {
+    if (!(await this.ensureMarkerAvailable())) {
       return;
     }
 
@@ -240,24 +240,24 @@ export default class PdfConverterPlugin extends Plugin {
   }
 
   /**
-   * Ensure Pandoc is available for manual conversion.
+   * Ensure Marker is available for manual conversion.
    */
-  private async ensurePandocAvailable(): Promise<boolean> {
-    if (this.pandocAvailable) {
+  private async ensureMarkerAvailable(): Promise<boolean> {
+    if (this.markerAvailable) {
       return true;
     }
 
-    const status = await this.recheckPandoc();
+    const status = await this.recheckMarker();
     if (!status.installed) {
-      new Notice('PDF Auto Converter: Pandoc not found. Configure the path in settings.');
+      new Notice('PDF Auto Converter: Marker not found. Configure the path in settings.');
       return false;
     }
 
     return true;
   }
 
-  private getPandocPath(): string {
-    return this.resolvedPandocPath || this.settings.pandocPath;
+  private getMarkerPath(): string {
+    return this.resolvedMarkerPath || this.settings.markerPath;
   }
 
   /**
@@ -288,16 +288,11 @@ export default class PdfConverterPlugin extends Plugin {
   ): Promise<boolean> {
     const pdfName = file.basename;
     const showSuccessNotice = options.showSuccessNotice ?? true;
+    let buffer: ArrayBuffer | null = null;
 
     try {
       // Read the file
-      const buffer = await this.app.vault.readBinary(file);
-
-      // Check if password protected
-      if (await isPasswordProtected(buffer, this.getPandocPath())) {
-        new Notice(`Cannot convert "${pdfName}.pdf": File is password protected.`);
-        return false;
-      }
+      buffer = await this.app.vault.readBinary(file);
 
       // Get settings
       const attachmentFolderPath = this.getAttachmentFolderPath();
@@ -312,7 +307,7 @@ export default class PdfConverterPlugin extends Plugin {
       const result = await convertPdf(
         buffer,
         pdfName,
-        this.getPandocPath()
+        this.getMarkerPath()
       );
 
       const imagePaths = new Map<string, string>();
@@ -378,6 +373,11 @@ export default class PdfConverterPlugin extends Plugin {
       return true;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+
+      if (buffer && await isPasswordProtected(buffer)) {
+        new Notice(`Cannot convert "${pdfName}.pdf": File is password protected.`);
+        return false;
+      }
 
       if (errorMessage.includes('corrupt') || errorMessage.includes('invalid')) {
         new Notice(`Cannot convert "${pdfName}.pdf": File appears to be corrupted.`);

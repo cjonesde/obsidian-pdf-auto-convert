@@ -12,7 +12,7 @@ import type PdfConverterPlugin from './main';
  */
 export class PdfConverterSettingTab extends PluginSettingTab {
   plugin: PdfConverterPlugin;
-  private pandocStatusEl: HTMLElement | null = null;
+  private markerStatusEl: HTMLElement | null = null;
 
   constructor(app: App, plugin: PdfConverterPlugin) {
     super(app, plugin);
@@ -23,10 +23,10 @@ export class PdfConverterSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    // Pandoc status section
-    new Setting(containerEl).setName('Pandoc').setHeading();
+    // Marker status section
+    new Setting(containerEl).setName('Marker').setHeading();
 
-    this.createPandocStatusSetting(containerEl);
+    this.createMarkerStatusSetting(containerEl);
 
     // Conversion options section
     new Setting(containerEl).setName('Conversion').setHeading();
@@ -72,60 +72,60 @@ export class PdfConverterSettingTab extends PluginSettingTab {
   }
 
   /**
-   * Create Pandoc status and path settings.
+   * Create Marker status and path settings.
    */
-  private createPandocStatusSetting(containerEl: HTMLElement): void {
+  private createMarkerStatusSetting(containerEl: HTMLElement): void {
     const statusSetting = new Setting(containerEl)
       .setName('Status')
-      .setDesc('Checking Pandoc installation...');
+      .setDesc('Checking Marker installation...');
 
-    this.pandocStatusEl = statusSetting.descEl;
-    this.updatePandocStatus();
+    this.markerStatusEl = statusSetting.descEl;
+    this.updateMarkerStatus();
 
     const pathHint = Platform.isMacOS
-      ? 'Run "which pandoc" in Terminal to find the path.'
+      ? 'Run "which marker" in Terminal to find the path.'
       : Platform.isWin
-        ? 'Run "Get-Command pandoc" in PowerShell to find the path.'
-        : 'Run "which pandoc" in a terminal to find the path.';
+        ? 'Run "Get-Command marker" in PowerShell to find the path.'
+        : 'Run "which marker" in a terminal to find the path.';
 
     new Setting(containerEl)
-      .setName('Pandoc path')
+      .setName('Marker path')
       .setDesc(`Leave empty to use system PATH. ${pathHint}`)
       .addText((text) =>
         text
-          .setPlaceholder('/usr/local/bin/pandoc')
-          .setValue(this.plugin.settings.pandocPath)
+          .setPlaceholder('/usr/local/bin/marker')
+          .setValue(this.plugin.settings.markerPath)
           .onChange(async (value) => {
-            this.plugin.settings.pandocPath = value;
+            this.plugin.settings.markerPath = value;
             await this.plugin.saveSettings();
-            await this.updatePandocStatus();
+            await this.updateMarkerStatus();
           })
       );
   }
 
   /**
-   * Update the Pandoc status display.
+   * Update the Marker status display.
    */
-  private async updatePandocStatus(): Promise<void> {
-    if (!this.pandocStatusEl) return;
+  private async updateMarkerStatus(): Promise<void> {
+    if (!this.markerStatusEl) return;
 
-    this.pandocStatusEl.setText('Checking...');
+    this.markerStatusEl.setText('Checking...');
 
     try {
-      const status = await this.plugin.recheckPandoc();
+      const status = await this.plugin.recheckMarker();
 
       if (status.installed) {
         const pathLabel = status.path ? ` at ${status.path}` : '';
-        this.pandocStatusEl.setText(`Pandoc ${status.version} found${pathLabel}`);
-        this.pandocStatusEl.style.color = 'var(--text-success)';
+        this.markerStatusEl.setText(`Marker ${status.version} found${pathLabel}`);
+        this.markerStatusEl.style.color = 'var(--text-success)';
       } else {
-        this.pandocStatusEl.setText('Pandoc not found. Please install from pandoc.org');
-        this.pandocStatusEl.style.color = 'var(--text-error)';
+        this.markerStatusEl.setText('Marker not found. Please install marker-pdf.');
+        this.markerStatusEl.style.color = 'var(--text-error)';
       }
     } catch (error) {
-      this.pandocStatusEl.setText('Error checking Pandoc');
-      this.pandocStatusEl.style.color = 'var(--text-error)';
-      console.error('PDF Auto Converter: Error checking Pandoc:', error);
+      this.markerStatusEl.setText('Error checking Marker');
+      this.markerStatusEl.style.color = 'var(--text-error)';
+      console.error('PDF Auto Converter: Error checking Marker:', error);
     }
   }
 }
