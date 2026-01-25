@@ -1,0 +1,33 @@
+{
+  "name": "obsidian-pdf-auto-convert",
+  "version": "1.0.0",
+  "description": "Automatically convert .pdf files to Markdown in Obsidian",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "pdf",
+    "markdown",
+    "converter"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.11.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.27.2",
+    "jest": "^29.7.0",
+    "obsidian": "^1.5.7",
+    "ts-jest": "^29.1.2",
+    "tslib": "^2.8.1",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "pdf-auto-convert",
+  "name": "PDF Auto Converter",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "Convert PDF files to Markdown automatically when added to your vault.",
+  "author": "Christopher Jones",
+  "authorUrl": "https://github.com/wuhup",
+  "isDesktopOnly": true
+}
