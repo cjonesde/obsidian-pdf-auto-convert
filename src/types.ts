@@ -1,4 +1,12 @@
 /**
+ * Converter backend type.
+ * - 'marker': Use marker-pdf (ML-based, best quality, heavy on resources)
+ * - 'pdftotext': Use poppler's pdftotext (lightweight, layout-preserving text only)
+ * - 'auto': Try marker first, fall back to pdftotext on timeout/resource errors
+ */
+export type ConverterType = 'marker' | 'pdftotext' | 'auto';
+
+/**
  * Plugin settings interface
  */
 export interface PdfConverterSettings {
@@ -10,6 +18,14 @@ export interface PdfConverterSettings {
   deleteOriginal: boolean;
   /** Custom path to Marker executable (empty = use PATH) */
   markerPath: string;
+  /** Maximum time in seconds to allow a conversion to run */
+  conversionTimeout: number;
+  /** File size in MB above which auto-conversion is skipped (user directed to right-click) */
+  fileSizeWarningMB: number;
+  /** Which converter backend to use */
+  converter: ConverterType;
+  /** Custom path to pdftotext executable (empty = use PATH) */
+  pdftotextPath: string;
 }
 
 /**
@@ -20,6 +36,10 @@ export const DEFAULT_SETTINGS: PdfConverterSettings = {
   includeFrontmatter: true,
   deleteOriginal: false,
   markerPath: '',
+  conversionTimeout: 120,
+  fileSizeWarningMB: 50,
+  converter: 'marker',
+  pdftotextPath: '',
 };
 
 /**

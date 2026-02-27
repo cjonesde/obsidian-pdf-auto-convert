@@ -1,4 +1,4 @@
-import { generateFrontmatter, generateMarkdownOutput } from './converter';
+import { generateFrontmatter, generateMarkdownOutput, isResourceError } from './converter';
 import { DocumentMetadata } from './types';
 
 describe('generateFrontmatter', () => {
@@ -132,5 +132,52 @@ describe('generateMarkdownOutput', () => {
     expect(result).toContain('---');
     expect(result).toContain('author: "Author"');
     expect(result).not.toContain('source:');
+  });
+});
+
+describe('isResourceError', () => {
+  it('should detect killed process', () => {
+    const error = { killed: true, code: 1, message: 'Command failed' };
+    expect(isResourceError(error)).toBe(true);
+  });
+
+  it('should detect SIGTERM signal', () => {
+    const error = { killed: false, signal: 'SIGTERM', message: 'Process terminated' };
+    expect(isResourceError(error)).toBe(true);
+  });
+
+  it('should detect SIGKILL signal', () => {
+    const error = { killed: false, signal: 'SIGKILL', message: 'Process killed' };
+    expect(isResourceError(error)).toBe(true);
+  });
+
+  it('should detect ETIMEDOUT code', () => {
+    const error = { killed: false, code: 'ETIMEDOUT', message: 'Connection timed out' };
+    expect(isResourceError(error)).toBe(true);
+  });
+
+  it('should detect maxBuffer exceeded', () => {
+    const error = new Error('stdout maxBuffer length exceeded');
+    expect(isResourceError(error)).toBe(true);
+  });
+
+  it('should detect ETIMEDOUT in message', () => {
+    const error = new Error('ETIMEDOUT: operation timed out');
+    expect(isResourceError(error)).toBe(true);
+  });
+
+  it('should return false for normal errors', () => {
+    const error = new Error('ENOENT: no such file or directory');
+    expect(isResourceError(error)).toBe(false);
+  });
+
+  it('should return false for null/undefined', () => {
+    expect(isResourceError(null)).toBe(false);
+    expect(isResourceError(undefined)).toBe(false);
+  });
+
+  it('should return false for non-object values', () => {
+    expect(isResourceError('string error')).toBe(false);
+    expect(isResourceError(42)).toBe(false);
   });
 });

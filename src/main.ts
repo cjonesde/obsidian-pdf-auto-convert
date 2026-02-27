@@ -1,7 +1,7 @@
 import { App, ButtonComponent, Modal, Notice, Plugin, TAbstractFile, TFile, TFolder, normalizePath } from 'obsidian';
 import { PdfConverterSettings, DEFAULT_SETTINGS } from './types';
 import { PdfConverterSettingTab } from './settings';
-import { convertPdf, generateMarkdownOutput, isPasswordProtected, isMarkerInstalled, replaceImageReferences } from './converter';
+import { convertPdf, generateMarkdownOutput, isPasswordProtected, isMarkerInstalled, isPdftotextInstalled, isResourceError, replaceImageReferences } from './converter';
 import { resolveAttachmentPath, isInAttachmentFolder, getParentFolder } from './path-resolver';
 
 /**
@@ -21,6 +21,8 @@ export default class PdfConverterPlugin extends Plugin {
   private markerCheckComplete = false;
   private markerCheckPromise: Promise<void> | null = null;
   private resolvedMarkerPath = '';
+  private pdftotextAvailable = false;
+  private resolvedPdftotextPath = '';
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -65,9 +67,21 @@ export default class PdfConverterPlugin extends Plugin {
     } catch (error) {
       console.error('PDF Auto Converter: Error checking Marker:', error);
       this.markerAvailable = false;
-    } finally {
-      this.markerCheckComplete = true;
     }
+
+    try {
+      const pdftotextStatus = await isPdftotextInstalled(this.settings.pdftotextPath);
+      this.pdftotextAvailable = pdftotextStatus.installed;
+      this.resolvedPdftotextPath = pdftotextStatus.path ?? '';
+      if (this.pdftotextAvailable) {
+        console.log(`PDF Auto Converter: pdftotext found at ${this.resolvedPdftotextPath}`);
+      }
+    } catch (error) {
+      console.error('PDF Auto Converter: Error checking pdftotext:', error);
+      this.pdftotextAvailable = false;
+    }
+
+    this.markerCheckComplete = true;
   }
 
   private async waitForMarkerCheck(): Promise<void> {
@@ -92,6 +106,16 @@ export default class PdfConverterPlugin extends Plugin {
     const status = await isMarkerInstalled(this.settings.markerPath);
     this.markerAvailable = status.installed;
     this.resolvedMarkerPath = status.path ?? '';
+    return status;
+  }
+
+  /**
+   * Recheck pdftotext availability (called after settings change).
+   */
+  async recheckPdftotext(): Promise<{ installed: boolean; path?: string }> {
+    const status = await isPdftotextInstalled(this.settings.pdftotextPath);
+    this.pdftotextAvailable = status.installed;
+    this.resolvedPdftotextPath = status.path ?? '';
     return status;
   }
 
@@ -125,6 +149,21 @@ export default class PdfConverterPlugin extends Plugin {
 
     // Skip if file is already in attachment folder (prevents infinite loop)
     if (isInAttachmentFolder(file.path, attachmentFolderPath)) {
+      return;
+    }
+
+    // Skip files exceeding the size warning threshold during auto-conversion
+    const fileSizeBytes = file.stat.size;
+    const fileSizeMB = fileSizeBytes / (1024 * 1024);
+    if (this.settings.fileSizeWarningMB > 0 && fileSizeMB > this.settings.fileSizeWarningMB) {
+      new Notice(
+        `PDF Auto Converter: Skipped "${file.basename}.pdf" (${fileSizeMB.toFixed(1)} MB). ` +
+        `Right-click the file to convert manually.`,
+        10000
+      );
+      console.log(
+        `PDF Auto Converter: Skipped ${file.path} (${fileSizeMB.toFixed(1)} MB > ${this.settings.fileSizeWarningMB} MB limit)`
+      );
       return;
     }
 
@@ -196,6 +235,19 @@ export default class PdfConverterPlugin extends Plugin {
     if (this.app.vault.getAbstractFileByPath(mdPath)) {
       new Notice(`Skipped "${file.basename}.pdf": Markdown file already exists.`);
       return;
+    }
+
+    // Warn about large files that may consume significant RAM/CPU
+    const fileSizeMB = file.stat.size / (1024 * 1024);
+    if (this.settings.fileSizeWarningMB > 0 && fileSizeMB > this.settings.fileSizeWarningMB) {
+      const confirmed = await new ConfirmModal(this.app, {
+        message: `"${file.basename}.pdf" is ${fileSizeMB.toFixed(1)} MB.`,
+        detail:
+          'Marker loads heavy ML models that can consume 4\u20138 GB+ of RAM. ' +
+          'Large PDFs may take several minutes and slow down your machine. Continue?',
+        confirmText: 'Convert anyway',
+      }).openAndWait();
+      if (!confirmed) return;
     }
 
     await this.convertFile(file);
@@ -327,11 +379,13 @@ export default class PdfConverterPlugin extends Plugin {
         : resolveAttachmentPath(attachmentFolderPath, file.path, file.name);
 
       // Convert the document
-      const result = await convertPdf(
-        buffer,
-        pdfName,
-        this.getMarkerPath()
-      );
+      const result = await convertPdf(buffer, {
+        documentName: pdfName,
+        markerPath: this.getMarkerPath(),
+        pdftotextPath: this.resolvedPdftotextPath || this.settings.pdftotextPath,
+        converter: this.settings.converter,
+        timeoutSeconds: this.settings.conversionTimeout,
+      });
 
       const imagePaths = new Map<string, string>();
       for (const image of result.images) {
@@ -399,6 +453,12 @@ export default class PdfConverterPlugin extends Plugin {
 
       if (buffer && await isPasswordProtected(buffer)) {
         new Notice(`Cannot convert "${pdfName}.pdf": File is password protected.`);
+        return false;
+      }
+
+      // Show timeout/resource errors with a longer display duration
+      if (errorMessage.includes('terminated after')) {
+        new Notice(`Error converting "${pdfName}.pdf": ${errorMessage}`, 10000);
         return false;
       }
 

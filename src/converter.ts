@@ -3,7 +3,7 @@ import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { DocumentMetadata, ConversionResult } from './types';
+import { DocumentMetadata, ConversionResult, ConverterType } from './types';
 import { extractMetadata } from './metadata';
 import { collectExtractedImages } from './image-handler';
 import { generatePdfLink } from './path-resolver';
@@ -13,6 +13,43 @@ const writeFileAsync = promisify(fs.writeFile);
 const unlinkAsync = promisify(fs.unlink);
 const mkdtempAsync = promisify(fs.mkdtemp);
 const rmdirAsync = promisify(fs.rm);
+
+/**
+ * Options for the convertPdf entry point.
+ */
+export interface ConvertPdfOptions {
+  documentName: string;
+  markerPath?: string;
+  pdftotextPath?: string;
+  converter?: ConverterType;
+  timeoutSeconds?: number;
+}
+
+/**
+ * Safeguard options passed to execFileAsync calls.
+ */
+interface ExecSafeguards {
+  timeout: number;
+  maxBuffer: number;
+}
+
+const MAX_BUFFER = 50 * 1024 * 1024; // 50 MB
+
+/**
+ * Detect whether an error was caused by resource limits (killed process,
+ * timeout, or maxBuffer exceeded). These should NOT be retried.
+ */
+export function isResourceError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as Record<string, unknown>;
+  if (err.killed === true) return true;
+  if (err.signal === 'SIGTERM' || err.signal === 'SIGKILL') return true;
+  if (typeof err.code === 'string' && err.code === 'ETIMEDOUT') return true;
+  const msg = typeof err.message === 'string' ? err.message : '';
+  if (msg.includes('maxBuffer')) return true;
+  if (msg.includes('ETIMEDOUT')) return true;
+  return false;
+}
 
 /**
  * Escape quotes in a YAML string value.
@@ -79,11 +116,14 @@ export function generateMarkdownOutput(
 
 /**
  * Convert PDF to Markdown using Marker.
+ * Passes timeout and maxBuffer safeguards to both attempts.
+ * Does NOT retry on resource errors (timeout, killed, maxBuffer).
  */
 async function convertWithMarker(
   inputDir: string,
   markerPath: string,
-  outputDir: string
+  outputDir: string,
+  safeguards: ExecSafeguards
 ): Promise<string> {
   const markerCmd = markerPath || 'marker';
   try {
@@ -91,15 +131,30 @@ async function convertWithMarker(
       '--output_dir', outputDir,
       '--output_format', 'markdown',
       inputDir,
-    ]);
+    ], safeguards);
     return stdout;
-  } catch {
+  } catch (error) {
+    if (isResourceError(error)) throw error;
     const { stdout } = await execFileAsync(markerCmd, [
       '--output_dir', outputDir,
       inputDir,
-    ]);
+    ], safeguards);
     return stdout;
   }
+}
+
+/**
+ * Convert PDF to text using poppler's pdftotext.
+ * Lightweight alternative that preserves layout but produces plain text, not rich Markdown.
+ */
+async function convertWithPdftotext(
+  pdfPath: string,
+  pdftotextPath: string,
+  safeguards: ExecSafeguards
+): Promise<string> {
+  const cmd = pdftotextPath || 'pdftotext';
+  const { stdout } = await execFileAsync(cmd, ['-layout', pdfPath, '-'], safeguards);
+  return stdout;
 }
 
 async function listFiles(rootDir: string): Promise<string[]> {
@@ -175,12 +230,13 @@ export function replaceImageReferences(
 }
 
 /**
- * Convert a PDF file to Markdown using Marker.
+ * Run the full marker conversion pipeline (write temp file, invoke marker, read output).
  */
-export async function convertPdf(
+async function runMarkerConversion(
   buffer: ArrayBuffer,
   documentName: string,
-  markerPath: string = ''
+  markerPath: string,
+  safeguards: ExecSafeguards
 ): Promise<ConversionResult> {
   const warnings: string[] = [];
 
@@ -195,7 +251,7 @@ export async function convertPdf(
     await fs.promises.mkdir(outputDir, { recursive: true });
 
     const metadata = await extractMetadata(tempFile);
-    const markerStdout = await convertWithMarker(inputDir, markerPath, outputDir);
+    const markerStdout = await convertWithMarker(inputDir, markerPath, outputDir, safeguards);
     let markdown = '';
     let markdownPath = '';
     try {
@@ -219,14 +275,6 @@ export async function convertPdf(
       images,
       warnings,
     };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-
-    if (errorMessage.includes('ENOENT') && errorMessage.includes('marker')) {
-      throw new Error('Marker is not installed. Please install marker-pdf to use this plugin.');
-    }
-
-    throw error;
   } finally {
     try {
       await unlinkAsync(tempFile);
@@ -234,6 +282,109 @@ export async function convertPdf(
     } catch {
       // Ignore cleanup errors
     }
+  }
+}
+
+/**
+ * Run pdftotext conversion pipeline.
+ */
+async function runPdftotextConversion(
+  buffer: ArrayBuffer,
+  documentName: string,
+  pdftotextPath: string,
+  safeguards: ExecSafeguards
+): Promise<ConversionResult> {
+  const tempDir = await mkdtempAsync(path.join(os.tmpdir(), 'pdf-convert-'));
+  const tempFile = path.join(tempDir, 'input.pdf');
+
+  try {
+    await writeFileAsync(tempFile, Buffer.from(buffer));
+    const metadata = await extractMetadata(tempFile);
+    const text = await convertWithPdftotext(tempFile, pdftotextPath, safeguards);
+
+    if (!text || text.trim().length === 0) {
+      throw new Error('pdftotext did not produce any output.');
+    }
+
+    return {
+      markdown: text.trim(),
+      metadata,
+      images: [],
+      warnings: ['Converted with pdftotext (plain text only, no images).'],
+    };
+  } finally {
+    try {
+      await unlinkAsync(tempFile);
+      await rmdirAsync(tempDir, { recursive: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+
+/**
+ * Convert a PDF buffer to Markdown.
+ * Dispatches to the appropriate backend based on options.converter:
+ * - 'marker': ML-based conversion (default)
+ * - 'pdftotext': lightweight poppler text extraction
+ * - 'auto': try marker, fall back to pdftotext on resource errors
+ */
+export async function convertPdf(
+  buffer: ArrayBuffer,
+  options: ConvertPdfOptions
+): Promise<ConversionResult> {
+  const {
+    documentName,
+    markerPath = '',
+    pdftotextPath = '',
+    converter = 'marker',
+    timeoutSeconds = 120,
+  } = options;
+
+  const safeguards: ExecSafeguards = {
+    timeout: timeoutSeconds * 1000,
+    maxBuffer: MAX_BUFFER,
+  };
+
+  try {
+    if (converter === 'pdftotext') {
+      return await runPdftotextConversion(buffer, documentName, pdftotextPath, safeguards);
+    }
+
+    if (converter === 'marker') {
+      return await runMarkerConversion(buffer, documentName, markerPath, safeguards);
+    }
+
+    // 'auto': try marker, fall back to pdftotext on resource errors
+    try {
+      return await runMarkerConversion(buffer, documentName, markerPath, safeguards);
+    } catch (markerError) {
+      if (!isResourceError(markerError)) throw markerError;
+      const timeoutMsg = `Marker was terminated after ${timeoutSeconds}s. Falling back to pdftotext.`;
+      console.warn('PDF Auto Converter:', timeoutMsg);
+      const result = await runPdftotextConversion(buffer, documentName, pdftotextPath, safeguards);
+      result.warnings.unshift(timeoutMsg);
+      return result;
+    }
+  } catch (error) {
+    if (isResourceError(error)) {
+      throw new Error(
+        `Conversion was terminated after ${timeoutSeconds}s. ` +
+        'The PDF may be too large or complex for this machine. ' +
+        'Try pdftotext backend or increase the timeout in settings.'
+      );
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    if (errorMessage.includes('ENOENT') && errorMessage.includes('marker')) {
+      throw new Error('Marker is not installed. Please install marker-pdf to use this plugin.');
+    }
+    if (errorMessage.includes('ENOENT') && errorMessage.includes('pdftotext')) {
+      throw new Error('pdftotext is not installed. Please install poppler-utils.');
+    }
+
+    throw error;
   }
 }
 
@@ -351,4 +502,27 @@ export async function isMarkerInstalled(
   }
 
   return { installed: false };
+}
+
+/**
+ * Check if pdftotext (from poppler) is installed.
+ * Follows the same pattern as isMarkerInstalled.
+ */
+export async function isPdftotextInstalled(
+  pdftotextPath: string = ''
+): Promise<{ installed: boolean; path?: string }> {
+  const trimmed = pdftotextPath.trim();
+  if (trimmed.length > 0) {
+    if (path.isAbsolute(trimmed)) {
+      if (await fileExists(trimmed)) {
+        return { installed: true, path: trimmed };
+      }
+      return { installed: false };
+    }
+    const resolved = await whichCommand(trimmed);
+    return resolved ? { installed: true, path: resolved } : { installed: false };
+  }
+
+  const resolved = await whichCommand('pdftotext');
+  return resolved ? { installed: true, path: resolved } : { installed: false };
 }

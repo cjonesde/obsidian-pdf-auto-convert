@@ -1,5 +1,6 @@
 import { App, Platform, PluginSettingTab, Setting } from 'obsidian';
 import type PdfConverterPlugin from './main';
+import { ConverterType } from './types';
 
 /**
  * Settings tab for the PDF Auto Converter plugin.
@@ -13,6 +14,7 @@ import type PdfConverterPlugin from './main';
 export class PdfConverterSettingTab extends PluginSettingTab {
   plugin: PdfConverterPlugin;
   private markerStatusEl: HTMLElement | null = null;
+  private pdftotextStatusEl: HTMLElement | null = null;
 
   constructor(app: App, plugin: PdfConverterPlugin) {
     super(app, plugin);
@@ -23,10 +25,68 @@ export class PdfConverterSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
+    // Converter backend section
+    new Setting(containerEl).setName('Converter backend').setHeading();
+
+    new Setting(containerEl)
+      .setName('Backend')
+      .setDesc('Marker uses ML models for best quality but is resource-heavy. pdftotext is lightweight (text only, no images). Auto tries Marker first and falls back to pdftotext on timeout.')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('marker', 'Marker')
+          .addOption('pdftotext', 'pdftotext')
+          .addOption('auto', 'Auto (Marker → pdftotext)')
+          .setValue(this.plugin.settings.converter)
+          .onChange(async (value) => {
+            this.plugin.settings.converter = value as ConverterType;
+            await this.plugin.saveSettings();
+          })
+      );
+
     // Marker status section
     new Setting(containerEl).setName('Marker').setHeading();
 
     this.createMarkerStatusSetting(containerEl);
+
+    // pdftotext status section
+    new Setting(containerEl).setName('pdftotext').setHeading();
+
+    this.createPdftotextStatusSetting(containerEl);
+
+    // Safeguards section
+    new Setting(containerEl).setName('Safeguards').setHeading();
+
+    new Setting(containerEl)
+      .setName('Conversion timeout')
+      .setDesc('Maximum time in seconds to allow a conversion to run before terminating the process.')
+      .addText((text) =>
+        text
+          .setPlaceholder('120')
+          .setValue(String(this.plugin.settings.conversionTimeout))
+          .onChange(async (value) => {
+            const parsed = parseInt(value, 10);
+            if (!isNaN(parsed) && parsed > 0) {
+              this.plugin.settings.conversionTimeout = parsed;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('File size warning')
+      .setDesc('Skip auto-conversion for files larger than this (in MB). Set to 0 to disable. Large files can still be converted via right-click.')
+      .addText((text) =>
+        text
+          .setPlaceholder('50')
+          .setValue(String(this.plugin.settings.fileSizeWarningMB))
+          .onChange(async (value) => {
+            const parsed = parseFloat(value);
+            if (!isNaN(parsed) && parsed >= 0) {
+              this.plugin.settings.fileSizeWarningMB = parsed;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
 
     // Conversion options section
     new Setting(containerEl).setName('Conversion').setHeading();
@@ -104,6 +164,38 @@ export class PdfConverterSettingTab extends PluginSettingTab {
   }
 
   /**
+   * Create pdftotext status and path settings.
+   */
+  private createPdftotextStatusSetting(containerEl: HTMLElement): void {
+    const statusSetting = new Setting(containerEl)
+      .setName('Status')
+      .setDesc('Checking pdftotext installation...');
+
+    this.pdftotextStatusEl = statusSetting.descEl;
+    this.updatePdftotextStatus();
+
+    const installHint = Platform.isMacOS
+      ? 'Install with "brew install poppler".'
+      : Platform.isWin
+        ? 'Install poppler for Windows and add to PATH.'
+        : 'Install with "apt install poppler-utils" or equivalent.';
+
+    new Setting(containerEl)
+      .setName('pdftotext path')
+      .setDesc(`Leave empty to use system PATH. ${installHint}`)
+      .addText((text) =>
+        text
+          .setPlaceholder('/usr/local/bin/pdftotext')
+          .setValue(this.plugin.settings.pdftotextPath)
+          .onChange(async (value) => {
+            this.plugin.settings.pdftotextPath = value;
+            await this.plugin.saveSettings();
+            await this.updatePdftotextStatus();
+          })
+      );
+  }
+
+  /**
    * Update the Marker status display.
    */
   private async updateMarkerStatus(): Promise<void> {
@@ -126,6 +218,32 @@ export class PdfConverterSettingTab extends PluginSettingTab {
       this.markerStatusEl.setText('Error checking Marker');
       this.markerStatusEl.style.color = 'var(--text-error)';
       console.error('PDF Auto Converter: Error checking Marker:', error);
+    }
+  }
+
+  /**
+   * Update the pdftotext status display.
+   */
+  private async updatePdftotextStatus(): Promise<void> {
+    if (!this.pdftotextStatusEl) return;
+
+    this.pdftotextStatusEl.setText('Checking...');
+
+    try {
+      const status = await this.plugin.recheckPdftotext();
+
+      if (status.installed) {
+        const pathLabel = status.path ? ` at ${status.path}` : '';
+        this.pdftotextStatusEl.setText(`pdftotext found${pathLabel}`);
+        this.pdftotextStatusEl.style.color = 'var(--text-success)';
+      } else {
+        this.pdftotextStatusEl.setText('pdftotext not found. Install poppler-utils for fallback support.');
+        this.pdftotextStatusEl.style.color = 'var(--text-error)';
+      }
+    } catch (error) {
+      this.pdftotextStatusEl.setText('Error checking pdftotext');
+      this.pdftotextStatusEl.style.color = 'var(--text-error)';
+      console.error('PDF Auto Converter: Error checking pdftotext:', error);
     }
   }
 }
