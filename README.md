@@ -6,7 +6,7 @@ Automatically convert PDF files (.pdf) to Markdown when added to your Obsidian v
 
 ### From Releases (Recommended)
 
-1. Download `main.js` and `manifest.json` from the [latest release](https://github.com/wuhup/obsidian-pdf-auto-convert/releases/latest)
+1. Download `main.js` and `manifest.json` from the [latest release](https://github.com/cjonesde/obsidian-pdf-auto-convert/releases/latest)
 2. Create a folder called `pdf-auto-convert` in your vault's `.obsidian/plugins/` directory
 3. Copy `main.js` and `manifest.json` into that folder
 4. Restart Obsidian
@@ -15,7 +15,7 @@ Automatically convert PDF files (.pdf) to Markdown when added to your Obsidian v
 ### From Source
 
 ```bash
-git clone https://github.com/wuhup/obsidian-pdf-auto-convert.git
+git clone https://github.com/cjonesde/obsidian-pdf-auto-convert.git
 cd obsidian-pdf-auto-convert
 npm install
 npm run build
